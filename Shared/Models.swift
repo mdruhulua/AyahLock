@@ -27,6 +27,7 @@ struct PlaybackSettings: Codable, Equatable {
     var showBengali: Bool = true
     var maxMinutes: Int = 30          // safety cap so a forgotten loop stops
     var defaultReciterID: String = Reciter.all[0].id
+    var arabicFontSize: Double = 26   // Quran reader text size
 }
 
 struct Reciter: Identifiable, Hashable {

@@ -45,6 +45,7 @@ final class RecitationPlayer: NSObject, ObservableObject {
 
     func play(_ item: RecitationItem) {
         stop()
+        SurahAudioPlayer.shared.stop()
         guard !item.audioFileNames.isEmpty else { return }
 
         settings = SharedStore.shared.settings
@@ -149,36 +150,51 @@ final class RecitationPlayer: NSObject, ObservableObject {
 
     // MARK: - System integration
 
-    private func configureAudioSession() {
+    func configureAudioSession() {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, mode: .spokenAudio)
         try? session.setActive(true)
     }
 
-    private func configureRemoteCommands() {
+    /// Lock-screen and headphone controls. One set of handlers serves both
+    /// players: commands go to the surah player while it has a session.
+    func configureRemoteCommands() {
         guard !commandsConfigured else { return }
         commandsConfigured = true
         let center = MPRemoteCommandCenter.shared()
         center.playCommand.addTarget { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                let surah = SurahAudioPlayer.shared
+                if surah.hasSession { surah.resume(); return }
                 if self.isActive { self.resume() } else { self.playPinned() }
             }
             return .success
         }
         center.pauseCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.pause() }
+            Task { @MainActor in
+                let surah = SurahAudioPlayer.shared
+                if surah.hasSession { surah.pause() } else { self?.pause() }
+            }
             return .success
         }
         center.togglePlayPauseCommand.addTarget { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                let surah = SurahAudioPlayer.shared
+                if surah.hasSession {
+                    surah.isPlaying ? surah.pause() : surah.resume()
+                    return
+                }
                 if self.isPaused { self.resume() } else { self.pause() }
             }
             return .success
         }
         center.stopCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.stop() }
+            Task { @MainActor in
+                SurahAudioPlayer.shared.stop()
+                self?.stop()
+            }
             return .success
         }
         center.nextTrackCommand.isEnabled = false

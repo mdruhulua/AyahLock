@@ -209,3 +209,134 @@ final class LibraryTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path), "Audio file wasn't cleaned up")
     }
 }
+
+/// The whole-Quran text: download, completeness, Bismillah handling, search.
+@MainActor
+final class QuranTextTests: XCTestCase {
+    override func setUp() async throws {
+        let store = QuranTextStore.shared
+        if !store.isReady { await store.download() }
+        if case .failed(let message) = store.state { XCTFail("Download failed: \(message)") }
+    }
+
+    func testWholeQuranIsStoredInAllThreeLanguages() throws {
+        let store = QuranTextStore.shared
+        XCTAssertTrue(store.isReady)
+        let text = try XCTUnwrap(store.text)
+        XCTAssertEqual(text.arabic.joined().count, 6236)
+        XCTAssertEqual(text.english.joined().count, 6236)
+        XCTAssertEqual(text.bengali.joined().count, 6236)
+        XCTAssertTrue(store.english(112, 1).contains("Allah"), store.english(112, 1))
+        XCTAssertTrue(store.bengali(2, 255).unicodeScalars.contains { (0x0980...0x09FF).contains($0.value) })
+        XCTAssertFalse(store.arabic(114, 6).isEmpty)
+    }
+
+    func testBismillahIsAHeadingNotPartOfAyahOne() {
+        let store = QuranTextStore.shared
+        let bismillah = store.text?.bismillah ?? ""
+        XCTAssertFalse(bismillah.isEmpty)
+        XCTAssertEqual(store.arabic(1, 1), bismillah, "In Al-Fatihah the Bismillah is ayah 1")
+        XCTAssertFalse(store.arabic(2, 1).contains(bismillah))
+        XCTAssertLessThan(store.arabic(2, 1).count, 15, "2:1 should be just Alif-Lam-Mim: \(store.arabic(2, 1))")
+        XCTAssertFalse(store.arabic(9, 1).hasPrefix(bismillah), "Surah 9 has no Bismillah")
+        XCTAssertFalse(QuranTextStore.showsBismillah(9))
+        XCTAssertTrue(QuranTextStore.showsBismillah(36))
+    }
+
+    func testTextIsSavedForOfflineUse() {
+        let reloaded = QuranTextStore()
+        XCTAssertTrue(reloaded.isReady, "A fresh launch should read the saved text without downloading")
+        XCTAssertEqual(reloaded.arabic(36, 1), QuranTextStore.shared.arabic(36, 1))
+    }
+
+    func testSearchFindsEnglishAndArabicWithoutVowelMarks() {
+        let store = QuranTextStore.shared
+        XCTAssertTrue(store.search("Kursi").contains(AyahRef(surah: 2, ayah: 255)), "English search failed")
+        XCTAssertTrue(store.search("الرحمن").contains(AyahRef(surah: 55, ayah: 1)), "Arabic search failed")
+        XCTAssertTrue(store.search("x").isEmpty, "One letter should not search")
+    }
+
+    func testGlobalAyahNumbers() {
+        XCTAssertEqual(QuranTextStore.globalNumber(surah: 1, ayah: 1), 1)
+        XCTAssertEqual(QuranTextStore.globalNumber(surah: 2, ayah: 255), 262)
+        XCTAssertEqual(QuranTextStore.globalNumber(surah: 114, ayah: 6), 6236)
+    }
+
+    func testPinningFromReaderUsesStoredText() async throws {
+        let item = try await QuranAPI.makeItem(surah: 36, from: 58, to: 58, reciterID: "ar.alafasy", title: "")
+        XCTAssertEqual(item.title, "Ya-Sin 58")
+        XCTAssertEqual(item.arabic, QuranTextStore.shared.arabic(36, 58))
+        XCTAssertEqual(item.bengali, QuranTextStore.shared.bengali(36, 58))
+        XCTAssertNotNil(QuranAPI.localAudio(reciterID: "ar.alafasy", surah: 36, ayah: 58))
+    }
+}
+
+/// Surah playback order, offline saving, and real streaming playback.
+@MainActor
+final class SurahPlayerTests: XCTestCase {
+    override func tearDown() async throws {
+        SurahAudioPlayer.shared.stop()
+    }
+
+    func testPlaylistOrder() async throws {
+        let player = SurahAudioPlayer.shared
+        let ikhlas = try await player.playlist(surah: 112, from: 1, reciterID: "ar.alafasy")
+        XCTAssertEqual(ikhlas.map(\.ayah), [0, 1, 2, 3, 4], "Bismillah then ayahs 1–4")
+
+        let tawbah = try await player.playlist(surah: 9, from: 1, reciterID: "ar.alafasy")
+        XCTAssertEqual(tawbah.first?.ayah, 1, "Surah 9 starts without Bismillah")
+        XCTAssertEqual(tawbah.count, 129)
+
+        let fromMiddle = try await player.playlist(surah: 2, from: 255, reciterID: "ar.alafasy")
+        XCTAssertEqual(fromMiddle.first?.ayah, 255)
+        XCTAssertEqual(fromMiddle.count, 32)
+
+        let fatihah = try await player.playlist(surah: 1, from: 1, reciterID: "ar.alafasy")
+        XCTAssertEqual(fatihah.map(\.ayah), Array(1...7), "No extra Bismillah in Al-Fatihah")
+    }
+
+    func testSaveSurahForOffline() async throws {
+        let player = SurahAudioPlayer.shared
+        player.startDownload(surah: 108, reciterID: "ar.alafasy")
+        let deadline = Date().addingTimeInterval(60)
+        while player.download != nil && Date() < deadline {
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+        XCTAssertNil(player.lastError)
+        XCTAssertTrue(player.isDownloaded(surah: 108, reciterID: "ar.alafasy"))
+
+        let playlist = try await player.playlist(surah: 108, from: 1, reciterID: "ar.alafasy")
+        XCTAssertTrue(playlist.filter { $0.ayah > 0 }.allSatisfy(\.url.isFileURL), "Saved surah should play from the phone")
+
+        player.deleteDownload(surah: 108, reciterID: "ar.alafasy", keeping: [])
+        XCTAssertFalse(player.isDownloaded(surah: 108, reciterID: "ar.alafasy"))
+    }
+
+    func testStreamingPlaybackAdvancesThroughAyahs() async throws {
+        let player = SurahAudioPlayer.shared
+        await player.play(surah: 112, from: 1, reciterID: "ar.alafasy")
+        XCTAssertNil(player.lastError)
+        XCTAssertTrue(player.hasSession)
+
+        let deadline = Date().addingTimeInterval(45)
+        while (player.currentAyah ?? 0) < 2 && player.hasSession && Date() < deadline {
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+        XCTAssertGreaterThanOrEqual(player.currentAyah ?? 0, 2, "Playback didn't move past ayah 1")
+    }
+
+    func testStartingOnePlayerStopsTheOther() async throws {
+        await SurahAudioPlayer.shared.play(surah: 112, from: 1, reciterID: "ar.alafasy")
+        XCTAssertTrue(SurahAudioPlayer.shared.hasSession)
+
+        let source = try XCTUnwrap(Silence.url(seconds: 0.5))
+        let name = "test_switch_\(UUID().uuidString).wav"
+        try FileManager.default.copyItem(at: source, to: SharedStore.shared.audioDirectory.appendingPathComponent(name))
+        RecitationPlayer.shared.play(RecitationItem(
+            kind: .customDua, title: "t", reference: "t", arabic: "x", english: "", bengali: "",
+            audioFileNames: [name], reciterName: "t"))
+
+        XCTAssertFalse(SurahAudioPlayer.shared.hasSession, "Surah playback should stop when a pinned item plays")
+        RecitationPlayer.shared.stop()
+    }
+}

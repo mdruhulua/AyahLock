@@ -78,12 +78,15 @@ final class QuranTextStore: ObservableObject {
 
             // The Uthmani text puts the Bismillah at the start of ayah 1 of most
             // surahs. Show it as a heading instead, so ayah 1 is just ayah 1.
+            // The marks can be written slightly differently from 1:1, so compare
+            // word by word with vowel marks removed.
             let bismillah = arabic[0][0]
+            let bismillahWords = bismillah.split(separator: " ").map { Self.fold(String($0)) }
             for index in 1..<arabic.count where Self.showsBismillah(index + 1) {
-                let first = arabic[index][0]
-                if first.hasPrefix(bismillah) {
-                    arabic[index][0] = String(first.dropFirst(bismillah.count))
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                let words = arabic[index][0].split(separator: " ")
+                let leading = words.prefix(bismillahWords.count).map { Self.fold(String($0)) }
+                if words.count > bismillahWords.count && leading == bismillahWords {
+                    arabic[index][0] = words.dropFirst(bismillahWords.count).joined(separator: " ")
                 }
             }
 
@@ -152,10 +155,25 @@ final class QuranTextStore: ObservableObject {
         return results
     }
 
+    /// Lowercases and removes vowel marks so searches match with or without them.
+    /// Arabic: removes harakat and Quranic marks, tatweel and small waw/yeh, and
+    /// treats alef wasla and hamza-alefs as plain alef. Bengali is left intact.
     nonisolated static func fold(_ s: String) -> String {
-        s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-            .replacingOccurrences(of: "\u{0671}", with: "\u{0627}")  // alef wasla → alef
-            .replacingOccurrences(of: "\u{0640}", with: "")          // tatweel
+        var out = String.UnicodeScalarView()
+        for scalar in s.lowercased().decomposedStringWithCanonicalMapping.unicodeScalars {
+            let v = scalar.value
+            if v == 0x0640 || v == 0x06E5 || v == 0x06E6 { continue }
+            if scalar.properties.generalCategory == .nonspacingMark,
+               (0x0300...0x036F).contains(v) || (0x0600...0x06FF).contains(v) || (0x08D0...0x08FF).contains(v) {
+                continue
+            }
+            switch v {
+            case 0x0671, 0x0622, 0x0623, 0x0625: out.append(Unicode.Scalar(0x0627)!)   // ٱ آ أ إ → ا
+            case 0x0649: out.append(Unicode.Scalar(0x064A)!)                         // ى → ي
+            default: out.append(scalar)
+            }
+        }
+        return String(out)
     }
 
     // MARK: - Reading position

@@ -1,0 +1,34 @@
+# Compiles AyahLock for the iOS Simulator on GitHub's Mac machines.
+# Runs on every push; you can also start it from the Actions tab ("Run workflow").
+# This checks that the code builds. It does not sign, install or upload anything.
+name: Build check
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use the newest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate the Xcode project
+        run: xcodegen generate
+
+      - name: Build for the iOS Simulator
+        run: |
+          xcodebuild \
+            -project AyahLock.xcodeproj \
+            -scheme AyahLock \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build

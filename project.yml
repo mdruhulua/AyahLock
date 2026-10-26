@@ -17,7 +17,9 @@ targets:
   AyahLock:
     type: application
     platform: iOS
-    scheme: {}
+    scheme:
+      testTargets:
+        - AyahLockTests
     sources:
       - App
       - Shared
@@ -66,3 +68,17 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.ayahlock.widget
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) WIDGET_EXTENSION"
+  AyahLockTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+    dependencies:
+      - target: AyahLock
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.ayahlock.tests
+        TARGETED_DEVICE_FAMILY: "1"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/AyahLock.app/AyahLock"
+        BUNDLE_LOADER: "$(TEST_HOST)"

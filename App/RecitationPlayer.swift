@@ -14,6 +14,8 @@ final class RecitationPlayer: NSObject, ObservableObject {
     @Published private(set) var currentRepeat = 0
     @Published private(set) var totalRepeats = 0
     @Published private(set) var currentItem: RecitationItem?
+    @Published private(set) var completedRepeats = 0   // full repetitions finished in this session
+    @Published private(set) var lastError: String?
 
     private var player: AVAudioPlayer?
     private var sequence: [URL] = []   // one repetition: the audio files, then a silent gap
@@ -49,6 +51,8 @@ final class RecitationPlayer: NSObject, ObservableObject {
         currentItem = item
         totalRepeats = max(0, settings.repeatCount)
         currentRepeat = 1
+        completedRepeats = 0
+        lastError = nil
         position = 0
         startedAt = Date()
 
@@ -112,10 +116,14 @@ final class RecitationPlayer: NSObject, ObservableObject {
         do {
             let p = try AVAudioPlayer(contentsOf: sequence[position])
             p.delegate = self
-            p.play()
             player = p
+            if !p.play() {
+                lastError = "The audio couldn't start playing."
+                stop()
+            }
         } catch {
             // A missing or broken file: stop rather than loop on an error.
+            lastError = "An audio file is missing or damaged. Try adding this item again."
             stop()
         }
     }
@@ -128,6 +136,7 @@ final class RecitationPlayer: NSObject, ObservableObject {
             return
         }
         // One full repetition finished.
+        completedRepeats += 1
         let elapsed = Date().timeIntervalSince(startedAt)
         if elapsed > Double(settings.maxMinutes * 60) { stop(); return }
         if totalRepeats != 0 && currentRepeat >= totalRepeats { stop(); return }

@@ -43,6 +43,9 @@ struct ContentView: View {
                         Text(item.bengali).font(.body)
                     }
                     playControls(for: item)
+                    if let error = player.lastError {
+                        Text(error).font(.caption).foregroundStyle(.red)
+                    }
                 }
                 .padding(.vertical, 6)
             } else {

@@ -1,6 +1,6 @@
-# Compiles AyahLock for the iOS Simulator on GitHub's Mac machines.
+# Builds AyahLock and runs its tests on a virtual iPhone on GitHub's Mac machines.
 # Runs on every push; you can also start it from the Actions tab ("Run workflow").
-# This checks that the code builds. It does not sign, install or upload anything.
+# It does not sign, install or upload anything.
 name: Build check
 
 on:
@@ -29,11 +29,44 @@ jobs:
       - name: Generate the Xcode project
         run: xcodegen generate
 
-      - name: Build for the iOS Simulator
+      - name: Pick a virtual iPhone
         run: |
-          xcodebuild \
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          devices = json.load(sys.stdin)['devices']
+          runtimes = sorted((k for k in devices if 'iOS' in k), reverse=True)
+          for r in runtimes:
+              for d in devices[r]:
+                  if d['name'].startswith('iPhone'):
+                      print(d['udid']); sys.exit()
+          ")
+          echo "Using simulator $UDID"
+          echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
+
+      - name: Build and run tests on the virtual iPhone
+        run: |
+          set -o pipefail
+          xcodebuild test \
             -project AyahLock.xcodeproj \
             -scheme AyahLock \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination "id=$SIM_UDID" \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            2>&1 | tee test.log
+
+      - name: Report results
+        if: always()
+        run: |
+          # Turns the key lines into annotations, visible on the run's summary page.
+          python3 - <<'PY'
+          import re
+          lines = open('test.log', errors='replace').read().splitlines()
+          keep = [l.strip() for l in lines if re.search(
+              r"error:|Test Case .*(passed|failed)|Executed \d+ test|XCTAssert|BUILD (SUCCEEDED|FAILED)|TEST (SUCCEEDED|FAILED)", l)]
+          seen, out = set(), []
+          for l in keep:
+              if l not in seen:
+                  seen.add(l); out.append(l[:300])
+          msg = "%0A".join(x.replace('%', '%25') for x in out[-60:]) or "No test output found"
+          level = "error" if any("failed" in x or "error:" in x for x in out) else "notice"
+          print(f"::{level} title=Test results::{msg}")
+          PY

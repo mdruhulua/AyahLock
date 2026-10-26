@@ -70,7 +70,9 @@ final class QuranTextStore: ObservableObject {
         if case .downloading = state { return }
         do {
             state = .downloading(step: 1, of: 3)
+            // Remove invisible byte-order marks some editions include.
             var arabic = try await Self.fetchEdition(QuranAPI.arabicEdition)
+                .map { $0.map { $0.replacingOccurrences(of: "\u{FEFF}", with: "").trimmingCharacters(in: .whitespaces) } }
             state = .downloading(step: 2, of: 3)
             let english = try await Self.fetchEdition(QuranAPI.englishEdition)
             state = .downloading(step: 3, of: 3)
@@ -81,9 +83,9 @@ final class QuranTextStore: ObservableObject {
             // The marks can be written slightly differently from 1:1, so compare
             // word by word with vowel marks removed.
             let bismillah = arabic[0][0]
-            let bismillahWords = bismillah.split(separator: " ").map { Self.fold(String($0)) }
+            let bismillahWords = bismillah.split(whereSeparator: \.isWhitespace).map { Self.fold(String($0)) }
             for index in 1..<arabic.count where Self.showsBismillah(index + 1) {
-                let words = arabic[index][0].split(separator: " ")
+                let words = arabic[index][0].split(whereSeparator: \.isWhitespace)
                 let leading = words.prefix(bismillahWords.count).map { Self.fold(String($0)) }
                 if words.count > bismillahWords.count && leading == bismillahWords {
                     arabic[index][0] = words.dropFirst(bismillahWords.count).joined(separator: " ")
@@ -163,6 +165,7 @@ final class QuranTextStore: ObservableObject {
         for scalar in s.lowercased().decomposedStringWithCanonicalMapping.unicodeScalars {
             let v = scalar.value
             if v == 0x0640 || v == 0x06E5 || v == 0x06E6 { continue }
+            if scalar.properties.generalCategory == .format { continue }   // invisible marks like U+FEFF
             if scalar.properties.generalCategory == .nonspacingMark,
                (0x0300...0x036F).contains(v) || (0x0600...0x06FF).contains(v) || (0x08D0...0x08FF).contains(v) {
                 continue

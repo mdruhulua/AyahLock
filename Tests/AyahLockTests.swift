@@ -237,7 +237,11 @@ final class QuranTextTests: XCTestCase {
         XCTAssertFalse(bismillah.isEmpty)
         XCTAssertEqual(store.arabic(1, 1), bismillah, "In Al-Fatihah the Bismillah is ayah 1")
         XCTAssertFalse(store.arabic(2, 1).contains(bismillah))
-        XCTAssertLessThan(store.arabic(2, 1).count, 15, "2:1 should be just Alif-Lam-Mim: \(store.arabic(2, 1))")
+        func codes(_ t: String) -> String {
+            t.unicodeScalars.prefix(40).map { String(format: "%04X", $0.value) }.joined(separator: " ")
+        }
+        XCTAssertLessThan(store.arabic(2, 1).count, 15,
+            "2:1 should be just Alif-Lam-Mim: \(store.arabic(2, 1)) | 1:1 codes: \(codes(store.arabic(1, 1))) | 2:1 codes: \(codes(store.arabic(2, 1)))")
         XCTAssertFalse(store.arabic(9, 1).hasPrefix(bismillah), "Surah 9 has no Bismillah")
         XCTAssertFalse(QuranTextStore.showsBismillah(9))
         XCTAssertTrue(QuranTextStore.showsBismillah(36))

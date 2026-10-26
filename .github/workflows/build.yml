@@ -11,12 +11,17 @@ jobs:
   build:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Use the newest stable Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
+
+      - name: Check Xcode is 26 or newer (needed for the App Store)
+        run: |
+          xcodebuild -version
+          xcodebuild -version | head -1 | grep -Eq 'Xcode (2[6-9]|[3-9][0-9])'
 
       - name: Install XcodeGen
         run: brew install xcodegen

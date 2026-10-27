@@ -14,6 +14,14 @@ A personal iPhone app: pin one ayah or dua to your lock screen, tap play, and he
 
 Text and audio come from the free AlQuran Cloud API: Arabic (Uthmani), English (Saheeh International), Bengali (Muhiuddin Khan), and six reciters.
 
+## Quran reader (Quran tab)
+
+- Whole Quran saved on the phone: Arabic with English and Bengali meanings, each switched on or off.
+- Recitation of any surah with the current ayah highlighted; surahs can be saved for offline listening.
+- **Tafsir** for any ayah (tap the ayah, then "Tafsir"): Ibn Kathir and Ma'ariful Qur'an in English; Ahsanul Bayaan, Abu Bakr Zakaria and Ibn Kathir in Bengali. Each surah is kept after first opening, or save a whole tafsir in Reader settings.
+- **Bookmarks with notes** (tap an ayah, then "Bookmark with note"); see them all under Quran > Bookmarks, search the notes, and share them as text.
+- **IndoPak script** with the Digital Khatt IndoPak font (SIL Open Font License). The matching text needs a free account to download: get "Digital Khatt Indopak Script – Ayah by Ayah" as JSON from https://qul.tarteel.ai/resources/quran-script/566, then either import it in Reader settings on the phone, or add it to the project as `App/IndoPak.json` so it's built in.
+
 ## What you need
 
 - A Mac with **Xcode** (free from the Mac App Store). Xcode 16 or newer is safest.

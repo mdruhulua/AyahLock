@@ -54,8 +54,11 @@ final class IndoPakText: ObservableObject {
     /// The Bismillah heading: ayah 1:1 without its end-of-ayah sign and number.
     var bismillah: String? {
         guard let first = text(1, 1) else { return nil }
-        let cut = first.firstIndex(of: "\u{06DD}") ?? first.endIndex
-        return String(first[..<cut]).trimmingCharacters(in: .whitespaces)
+        // Search code points: U+06DD joins with the number after it into one
+        // character, so a Character search for it alone would never match.
+        let scalars = first.unicodeScalars
+        let cut = scalars.firstIndex(of: "\u{06DD}") ?? scalars.endIndex
+        return String(String.UnicodeScalarView(scalars[..<cut])).trimmingCharacters(in: .whitespaces)
     }
 
     /// Copies a downloaded QUL JSON file into the app after checking it.

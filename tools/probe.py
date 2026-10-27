@@ -42,28 +42,40 @@ for slug in []:
             out.append(line)
 note("Tafsir", "\n".join(out)); out.clear()
 
-# IndoPak text sources
+# Digital Khatt IndoPak text candidates
 font = TTFont("App/Fonts/DigitalKhattIndoPak.ttf")
 cmap = set(font.getBestCmap().keys())
-for label, url in [
-    ("qcom-indopak-nastaleeq", "https://api.quran.com/api/v4/quran/verses/indopak_nastaleeq"),
-    ("qcom-indopak", "https://api.quran.com/api/v4/quran/verses/indopak"),
-    ("islamicapp-indopak", "https://api.islamic.app/v1/quran/verses/indopak"),
-]:
-    status, text = report(label, url, 300)
-    if status != 200:
-        continue
-    try:
-        data = json.loads(text)
-    except Exception as e:
-        out.append(f"   not JSON: {e}")
-        continue
-    verses = data.get("verses") or data.get("ayahs") or (data.get("data") or {}).get("ayahs") or []
-    key = next((k for k in (verses[0].keys() if verses else []) if k.startswith("text")), None)
-    texts = [v.get(key, "") for v in verses]
+def coverage(texts):
     chars = set(ord(c) for t in texts for c in t)
-    missing = sorted(c for c in chars - cmap if c not in (0x20,))
-    sample = {v.get("verse_key"): v.get(key) for v in verses if v.get("verse_key") in ("1:1", "2:1", "112:1")}
-    out.append(f"   verses={len(verses)} field={key} distinct_chars={len(chars)} missing_in_font={len(missing)} first={[hex(c) for c in missing[:25]]} private_use={sum(1 for c in chars if 0xE000<=c<=0xF8FF)}\n   sample={json.dumps(sample, ensure_ascii=False)[:500]}\n   2:1 codes={' '.join('%04X' % ord(c) for c in (sample.get('2:1') or ''))}")
-
-note("IndoPak", "\n".join(out))
+    missing = sorted(c for c in chars - cmap if c != 0x20)
+    return f"n={len(texts)} distinct={len(chars)} missing={len(missing)} {[hex(c) for c in missing[:20]]}"
+cands = [
+ "https://api.quran.com/api/v4/quran/verses/digital_khatt_indopak?chapter_number=2",
+ "https://api.quran.com/api/v4/quran/verses/text_digital_khatt_indopak?chapter_number=2",
+ "https://api.quran.com/api/v4/verses/by_key/2:1?fields=text_digital_khatt_indopak",
+ "https://api.quran.com/api/v4/verses/by_chapter/112?fields=text_digital_khatt_indopak,text_indopak_nastaleeq",
+ "https://qul.tarteel.ai/api/v1/verses/2:1.json",
+ "https://qul.tarteel.ai/api/v1/verses/2:1.json?script=text_digital_khatt_indopak",
+ "https://qul.tarteel.ai/resources/quran-script/566/download?format=json",
+ "https://qul.tarteel.ai/resources/quran-script/566.json",
+ "https://api.islamic.app/v1/quran/verses/digital_khatt_indopak",
+ "https://static-cdn.tarteel.ai/qul/fonts/dk/DigitalKhattIndoPak.otf",
+]
+for url in cands:
+    status, body = get(url)
+    ctype = ""
+    text = body[:2000].decode("utf-8", "replace")
+    line = f"{status} {url} bytes={len(body)}\n   {text[:260]!r}"
+    if status == 200 and body[:1] in (b"{", b"["):
+        try:
+            data = json.loads(body)
+            vs = data.get("verses") or ([data["verse"]] if "verse" in data else [])
+            for k in ("text_digital_khatt_indopak", "text"):
+                texts = [v.get(k) for v in vs if isinstance(v, dict) and v.get(k)]
+                if texts:
+                    line += f"\n   field={k} " + coverage(texts) + f" first={texts[0][:60]!r}"
+                    break
+        except Exception as e:
+            line += f" json err {e}"
+    out.append(line)
+note("DK-IndoPak", "\n".join(out))

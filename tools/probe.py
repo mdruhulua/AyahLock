@@ -24,7 +24,7 @@ def report(label, url, show=400):
     return status, text
 
 # Tafsir sources: whole-surah files, on jsDelivr and raw GitHub
-for slug in ["en-tafisr-ibn-kathir", "en-tafsir-maarif-ul-quran", "bn-tafseer-ibn-e-kaseer", "bn-tafsir-ahsanul-bayaan", "bn-tafsir-abu-bakr-zakaria"]:
+for slug in []:
     for host in ["https://cdn.jsdelivr.net/gh/spa5k/tafsir_api@main/tafsir", "https://raw.githubusercontent.com/spa5k/tafsir_api/main/tafsir"]:
         for surah in (2, 112):
             status, body = get(f"{host}/{slug}/{surah}.json")
@@ -64,6 +64,6 @@ for label, url in [
     chars = set(ord(c) for t in texts for c in t)
     missing = sorted(c for c in chars - cmap if c not in (0x20,))
     sample = {v.get("verse_key"): v.get(key) for v in verses if v.get("verse_key") in ("1:1", "2:1", "112:1")}
-    out.append(f"   verses={len(verses)} field={key} distinct_chars={len(chars)} missing_in_font={[hex(c) for c in missing]}\n   sample={json.dumps(sample, ensure_ascii=False)[:500]}\n   2:1 codes={' '.join('%04X' % ord(c) for c in (sample.get('2:1') or ''))}")
+    out.append(f"   verses={len(verses)} field={key} distinct_chars={len(chars)} missing_in_font={len(missing)} first={[hex(c) for c in missing[:25]]} private_use={sum(1 for c in chars if 0xE000<=c<=0xF8FF)}\n   sample={json.dumps(sample, ensure_ascii=False)[:500]}\n   2:1 codes={' '.join('%04X' % ord(c) for c in (sample.get('2:1') or ''))}")
 
 note("IndoPak", "\n".join(out))

@@ -14,7 +14,7 @@ struct QuranArabicText: View {
     var lineLimit: Int? = nil
 
     var body: some View {
-        let s = size ?? library.settings.arabicFontSize
+        let s: CGFloat = size ?? CGFloat(library.settings.arabicFontSize)
         Group {
             if library.settings.script == .indopak, let text = indopak.text(surah, ayah) {
                 Text(text)

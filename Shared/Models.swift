@@ -19,6 +19,14 @@ struct RecitationItem: Codable, Identifiable, Equatable {
     var reciterName: String
 }
 
+/// Which Arabic script the reader shows.
+enum QuranScript: String, Codable, CaseIterable, Identifiable {
+    case uthmani   // Madinah style
+    case indopak   // South Asian style (needs the IndoPak text file)
+    var id: String { rawValue }
+    var label: String { self == .uthmani ? "Uthmani (Madinah)" : "IndoPak" }
+}
+
 /// Your playback and display choices. Shared with the widget.
 struct PlaybackSettings: Codable, Equatable {
     var repeatCount: Int = 7          // 0 means "until I stop it"
@@ -28,6 +36,31 @@ struct PlaybackSettings: Codable, Equatable {
     var maxMinutes: Int = 30          // safety cap so a forgotten loop stops
     var defaultReciterID: String = Reciter.all[0].id
     var arabicFontSize: Double = 26   // Quran reader text size
+    var script: QuranScript = .uthmani
+    var tafsirSlug: String = "en-tafisr-ibn-kathir"
+
+    enum CodingKeys: String, CodingKey {
+        case repeatCount, gapSeconds, showEnglish, showBengali, maxMinutes
+        case defaultReciterID, arabicFontSize, script, tafsirSlug
+    }
+}
+
+extension PlaybackSettings {
+    /// Reads saved settings, keeping defaults for anything added in a later version,
+    /// so an app update never wipes your choices.
+    init(from decoder: Decoder) throws {
+        self.init()
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        repeatCount = try c.decodeIfPresent(Int.self, forKey: .repeatCount) ?? repeatCount
+        gapSeconds = try c.decodeIfPresent(Double.self, forKey: .gapSeconds) ?? gapSeconds
+        showEnglish = try c.decodeIfPresent(Bool.self, forKey: .showEnglish) ?? showEnglish
+        showBengali = try c.decodeIfPresent(Bool.self, forKey: .showBengali) ?? showBengali
+        maxMinutes = try c.decodeIfPresent(Int.self, forKey: .maxMinutes) ?? maxMinutes
+        defaultReciterID = try c.decodeIfPresent(String.self, forKey: .defaultReciterID) ?? defaultReciterID
+        arabicFontSize = try c.decodeIfPresent(Double.self, forKey: .arabicFontSize) ?? arabicFontSize
+        script = (try? c.decodeIfPresent(QuranScript.self, forKey: .script)) ?? script
+        tafsirSlug = try c.decodeIfPresent(String.self, forKey: .tafsirSlug) ?? tafsirSlug
+    }
 }
 
 struct Reciter: Identifiable, Hashable {

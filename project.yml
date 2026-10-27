@@ -25,10 +25,13 @@ targets:
       - Shared
       - path: Privacy/PrivacyInfo.xcprivacy
         buildPhase: resources
+      - path: Licenses
+        buildPhase: resources
     info:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: AyahLock
+        UIAppFonts: [DigitalKhattIndoPak.ttf]
         ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
         UIBackgroundModes: [audio]

@@ -1,4 +1,6 @@
 import AVFoundation
+import CoreText
+import UIKit
 import XCTest
 @testable import AyahLock
 
@@ -342,5 +344,211 @@ final class SurahPlayerTests: XCTestCase {
 
         XCTAssertFalse(SurahAudioPlayer.shared.hasSession, "Surah playback should stop when a pinned item plays")
         RecitationPlayer.shared.stop()
+    }
+}
+
+/// Settings saved by an older version must survive an update.
+final class SettingsMigrationTests: XCTestCase {
+    func testOlderSavedSettingsKeepTheirValues() throws {
+        let old = #"{"repeatCount":5,"gapSeconds":3,"showEnglish":false,"showBengali":true,"maxMinutes":60,"defaultReciterID":"ar.husary"}"#
+        let s = try JSONDecoder().decode(PlaybackSettings.self, from: Data(old.utf8))
+        XCTAssertEqual(s.repeatCount, 5)
+        XCTAssertEqual(s.gapSeconds, 3)
+        XCTAssertFalse(s.showEnglish)
+        XCTAssertEqual(s.defaultReciterID, "ar.husary")
+        XCTAssertEqual(s.script, .uthmani, "New settings get their defaults")
+        XCTAssertEqual(s.tafsirSlug, "en-tafisr-ibn-kathir")
+        XCTAssertEqual(s.arabicFontSize, 26)
+    }
+
+    func testRoundTrip() throws {
+        var s = PlaybackSettings()
+        s.script = .indopak
+        s.tafsirSlug = "bn-tafsir-ahsanul-bayaan"
+        let back = try JSONDecoder().decode(PlaybackSettings.self, from: JSONEncoder().encode(s))
+        XCTAssertEqual(back, s)
+    }
+}
+
+/// Tafsir downloads, grouping and offline storage (real data).
+@MainActor
+final class TafsirTests: XCTestCase {
+    private func tempStore() -> TafsirStore {
+        TafsirStore(directory: FileManager.default.temporaryDirectory
+            .appendingPathComponent("tafsir-test-\(UUID().uuidString)", isDirectory: true))
+    }
+
+    func testEveryTafsirLoadsInItsLanguage() async throws {
+        let store = tempStore()
+        for source in TafsirSource.all {
+            let texts = try await store.surahTexts(slug: source.slug, surah: 112)
+            XCTAssertEqual(texts.count, 4, source.slug)
+            XCTAssertTrue(texts.allSatisfy { !$0.isEmpty }, "\(source.slug) has empty ayahs")
+            let bengali = texts.joined().unicodeScalars.contains { (0x0980...0x09FF).contains($0.value) }
+            XCTAssertEqual(bengali, source.language == "Bengali", "\(source.slug) is in the wrong language")
+        }
+    }
+
+    func testAyatAlKursiTafsir() async throws {
+        let store = tempStore()
+        let en = try await store.entry(slug: "en-tafisr-ibn-kathir", surah: 2, ayah: 255)
+        XCTAssertTrue(en.text.contains("Allah"), String(en.text.prefix(100)))
+        XCTAssertLessThanOrEqual(en.fromAyah, 255)
+        XCTAssertGreaterThanOrEqual(en.toAyah, 255)
+        let bn = try await store.entry(slug: "bn-tafsir-ahsanul-bayaan", surah: 2, ayah: 255)
+        XCTAssertTrue(bn.text.unicodeScalars.contains { (0x0980...0x09FF).contains($0.value) })
+    }
+
+    func testSavedForOfflineAfterFirstOpen() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tafsir-offline-\(UUID().uuidString)")
+        let first = TafsirStore(directory: dir)
+        XCTAssertFalse(first.isSaved(slug: "bn-tafsir-abu-bakr-zakaria", surah: 1))
+        let online = try await first.surahTexts(slug: "bn-tafsir-abu-bakr-zakaria", surah: 1)
+        XCTAssertTrue(first.isSaved(slug: "bn-tafsir-abu-bakr-zakaria", surah: 1))
+        XCTAssertEqual(first.savedSurahCount(slug: "bn-tafsir-abu-bakr-zakaria"), 1)
+
+        let reopened = TafsirStore(directory: dir)
+        let fromDisk = try await reopened.surahTexts(slug: "bn-tafsir-abu-bakr-zakaria", surah: 1)
+        XCTAssertEqual(fromDisk, online)
+
+        reopened.deleteAll(slug: "bn-tafsir-abu-bakr-zakaria")
+        XCTAssertFalse(reopened.isSaved(slug: "bn-tafsir-abu-bakr-zakaria", surah: 1))
+    }
+
+    func testGroupingOfSharedExplanations() {
+        let texts = ["a", "b", "b", "b", "c", ""]
+        XCTAssertEqual(TafsirStore.group(texts, ayah: 1), TafsirEntry(text: "a", fromAyah: 1, toAyah: 1))
+        XCTAssertEqual(TafsirStore.group(texts, ayah: 3), TafsirEntry(text: "b", fromAyah: 2, toAyah: 4))
+        XCTAssertEqual(TafsirStore.group(texts, ayah: 6), TafsirEntry(text: "", fromAyah: 6, toAyah: 6))
+    }
+}
+
+/// Bookmarks with notes: add, edit, persist, delete, export.
+@MainActor
+final class BookmarkTests: XCTestCase {
+    private var fileURL: URL!
+
+    override func setUp() async throws {
+        fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("bookmarks-\(UUID().uuidString).json")
+    }
+
+    func testAddEditPersistDelete() {
+        let store = BookmarkStore(fileURL: fileURL)
+        XCTAssertFalse(store.isBookmarked(surah: 2, ayah: 255))
+
+        store.save(surah: 2, ayah: 255, note: "  Recite after every salah  ")
+        store.save(surah: 1, ayah: 1, note: "")
+        XCTAssertEqual(store.bookmark(surah: 2, ayah: 255)?.note, "Recite after every salah", "Note should be trimmed")
+
+        store.save(surah: 2, ayah: 255, note: "Before sleeping too")
+        XCTAssertEqual(store.bookmarks.count, 2, "Editing must not create a duplicate")
+
+        let reopened = BookmarkStore(fileURL: fileURL)
+        XCTAssertEqual(reopened.bookmark(surah: 2, ayah: 255)?.note, "Before sleeping too", "Bookmarks didn't persist")
+        XCTAssertEqual(reopened.sorted(.quran).map(\.ayah), [1, 255])
+        XCTAssertEqual(reopened.sorted(.recent).first?.ayah, 255)
+
+        reopened.delete(surah: 1, ayah: 1)
+        XCTAssertEqual(BookmarkStore(fileURL: fileURL).bookmarks.count, 1)
+    }
+
+    func testSearchAndExport() {
+        let store = BookmarkStore(fileURL: fileURL)
+        store.save(surah: 2, ayah: 255, note: "Protection at night")
+        store.save(surah: 112, ayah: 1, note: "Equal to a third")
+        XCTAssertEqual(store.filtered("protection", order: .quran).map(\.surah), [2])
+        XCTAssertEqual(store.filtered("Ikhlas", order: .quran).map(\.surah), [112], "Search by surah name")
+
+        let text = store.exportText(store: QuranTextStore.shared)
+        XCTAssertTrue(text.contains("Al-Baqarah 2:255"))
+        XCTAssertTrue(text.contains("Note: Protection at night"))
+    }
+}
+
+/// The IndoPak font and text loader.
+@MainActor
+final class IndoPakTests: XCTestCase {
+    /// Ayahs in the Digital Khatt IndoPak encoding (2:1, 73:4, 112:1), written as code points.
+    static let samples = [
+        "\u{0627}\u{0644}\u{089C}\u{0645}\u{0651}\u{089C} \u{06DD}\u{0661}\u{06DA}",
+        "\u{0627}\u{064E}\u{0648}\u{0652} \u{0632}\u{0650}\u{062F}\u{0652} \u{0639}\u{064E}\u{0644}\u{064E}\u{064A}\u{0652}\u{0647}\u{0650} \u{0648}\u{064E}\u{0631}\u{064E}\u{062A}\u{0651}\u{0650}\u{0644}\u{0650} \u{0627}\u{0644}\u{0652}\u{0642}\u{064F}\u{0631}\u{0652}\u{0627}\u{0670}\u{0646}\u{064E} \u{062A}\u{064E}\u{0631}\u{0652}\u{062A}\u{0650}\u{064A}\u{0652}\u{0644}\u{064B}\u{0627} \u{06DD}\u{0664}\u{0615}",
+        "\u{0642}\u{064F}\u{0644}\u{0652} \u{0647}\u{064F}\u{0648}\u{064E} \u{0627}\u{0644}\u{0644}\u{0651}\u{0670}\u{0647}\u{064F} \u{0627}\u{064E}\u{062D}\u{064E}\u{062F}\u{064C} \u{06DD}\u{0661}\u{06DA}",
+    ]
+
+    func testFontIsInstalledAndCoversTheText() throws {
+        let font = try XCTUnwrap(UIFont(name: IndoPakText.fontName, size: 24), "IndoPak font isn't registered")
+        let ctFont = font as CTFont
+        for sample in Self.samples {
+            for scalar in Set(sample.unicodeScalars) where scalar != " " {
+                var units = Array(String(scalar).utf16)
+                var glyphs = Array(repeating: CGGlyph(0), count: units.count)
+                let ok = CTFontGetGlyphsForCharacters(ctFont, &units, &glyphs, units.count)
+                XCTAssertTrue(ok && glyphs.allSatisfy { $0 != 0 },
+                              String(format: "Font has no glyph for U+%04X", scalar.value))
+            }
+        }
+    }
+
+    func testLicenceShipsWithTheApp() {
+        XCTAssertNotNil(Bundle.main.url(forResource: "DigitalKhattIndoPak-OFL", withExtension: "txt"))
+    }
+
+    private func fullQuranJSON(missing: String? = nil, asArray: Bool = false) throws -> Data {
+        var dict: [String: Any] = [:]
+        var array: [[String: Any]] = []
+        for surah in Surah.all {
+            for ayah in 1...surah.ayahCount {
+                let key = "\(surah.number):\(ayah)"
+                if key == missing { continue }
+                let text = key == "1:1" ? "بسم \u{06DD}\u{0661}" : "text \(key)"
+                dict[key] = ["verse_key": key, "text": text, "script_type": "text_digital_khatt_indopak"]
+                array.append(["verse_key": key, "text": text])
+            }
+        }
+        return try JSONSerialization.data(withJSONObject: asArray ? array : dict)
+    }
+
+    func testParsesQULFormatsAndRejectsIncompleteFiles() throws {
+        let parsed = try IndoPakText.parse(fullQuranJSON())
+        XCTAssertEqual(parsed.joined().count, 6236)
+        XCTAssertEqual(parsed[1][254], "text 2:255")
+        XCTAssertEqual(try IndoPakText.parse(fullQuranJSON(asArray: true))[113][5], "text 114:6")
+        XCTAssertThrowsError(try IndoPakText.parse(fullQuranJSON(missing: "36:10")))
+        XCTAssertThrowsError(try IndoPakText.parse(Data("not json".utf8)))
+    }
+
+    func testImportMakesTheScriptAvailable() throws {
+        let importedURL = FileManager.default.temporaryDirectory.appendingPathComponent("indopak-\(UUID().uuidString).json")
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("download-\(UUID().uuidString).json")
+        try fullQuranJSON().write(to: source)
+
+        let store = IndoPakText(importedURL: importedURL, bundle: Bundle(for: Self.self))
+        XCTAssertFalse(store.isAvailable)
+        try store.importFile(from: source)
+        XCTAssertTrue(store.isAvailable)
+        XCTAssertEqual(store.text(2, 255), "text 2:255")
+        XCTAssertEqual(store.bismillah, "بسم", "Bismillah heading should drop the end-of-ayah sign")
+
+        XCTAssertTrue(IndoPakText(importedURL: importedURL, bundle: Bundle(for: Self.self)).isAvailable, "Import didn't persist")
+        store.removeImported()
+        XCTAssertFalse(store.isAvailable)
+    }
+
+    func testBundledTextIfPresent() throws {
+        let store = IndoPakText.shared
+        guard store.isAvailable else {
+            throw XCTSkip("IndoPak.json isn't bundled yet")
+        }
+        XCTAssertEqual(store.lines?.joined().count, 6236)
+        let font = try XCTUnwrap(UIFont(name: IndoPakText.fontName, size: 24)) as CTFont
+        var missing = Set<UInt32>()
+        for scalar in Set(store.lines!.joined().joined().unicodeScalars) where scalar != " " {
+            var units = Array(String(scalar).utf16)
+            var glyphs = Array(repeating: CGGlyph(0), count: units.count)
+            if !CTFontGetGlyphsForCharacters(font, &units, &glyphs, units.count) || glyphs.contains(0) {
+                missing.insert(scalar.value)
+            }
+        }
+        XCTAssertTrue(missing.isEmpty, "Characters the font can't draw: \(missing.sorted().map { String(format: "U+%04X", $0) })")
     }
 }

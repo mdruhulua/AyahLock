@@ -7,6 +7,7 @@ typealias AyahRef = QuranTextStore.AyahRef
 
 struct QuranHomeView: View {
     @ObservedObject private var store = QuranTextStore.shared
+    @ObservedObject private var bookmarks = BookmarkStore.shared
     @State private var query = ""
     @State private var ayahResults: [AyahRef] = []
 
@@ -20,6 +21,12 @@ struct QuranHomeView: View {
                 }
             }
             .navigationTitle("Quran")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    NavigationLink { ReaderSettingsView() } label: { Image(systemName: "gearshape") }
+                        .accessibilityLabel("Reader settings")
+                }
+            }
             .navigationDestination(for: AyahRef.self) { ref in
                 SurahReaderView(surah: ref.surah, startAyah: ref.ayah)
             }
@@ -35,11 +42,20 @@ struct QuranHomeView: View {
 
     private var surahList: some View {
         List {
-            if query.isEmpty, let last = store.lastRead {
+            if query.isEmpty {
                 Section {
-                    NavigationLink(value: last) {
-                        Label("Continue: \(Surah.all[last.surah - 1].name), ayah \(last.ayah)",
-                              systemImage: "bookmark.fill")
+                    if let last = store.lastRead {
+                        NavigationLink(value: last) {
+                            Label("Continue: \(Surah.all[last.surah - 1].name), ayah \(last.ayah)",
+                                  systemImage: "book.fill")
+                        }
+                    }
+                    NavigationLink { BookmarksView() } label: {
+                        HStack {
+                            Label("Bookmarks", systemImage: "bookmark.fill")
+                            Spacer()
+                            Text("\(bookmarks.bookmarks.count)").foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -98,9 +114,7 @@ private struct SearchResultRow: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("\(Surah.all[ref.surah - 1].name) \(ref.surah):\(ref.ayah)")
                 .font(.caption).foregroundStyle(.secondary)
-            Text(store.arabic(ref.surah, ref.ayah))
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            QuranArabicText(surah: ref.surah, ayah: ref.ayah, size: 20, lineLimit: 1)
             Text(library.settings.showBengali && !library.settings.showEnglish
                  ? store.bengali(ref.surah, ref.ayah) : store.english(ref.surah, ref.ayah))
                 .font(.caption).lineLimit(2)
@@ -165,6 +179,9 @@ struct SurahReaderView: View {
     @State private var selectedAyah: Int?
     @State private var status: String?
     @State private var isDownloaded = false
+    @State private var tafsirFor: AyahRef?
+    @State private var bookmarkFor: AyahRef?
+    @ObservedObject private var bookmarks = BookmarkStore.shared
 
     private var info: Surah { Surah.all[surah - 1] }
     private var reciterID: String { library.settings.defaultReciterID }
@@ -173,10 +190,8 @@ struct SurahReaderView: View {
     var body: some View {
         ScrollViewReader { proxy in
             List {
-                if QuranTextStore.showsBismillah(surah), let bismillah = store.text?.bismillah {
-                    Text(bismillah)
-                        .font(.system(size: library.settings.arabicFontSize))
-                        .frame(maxWidth: .infinity)
+                if QuranTextStore.showsBismillah(surah) {
+                    BismillahHeading()
                         .listRowSeparator(.hidden)
                         .padding(.vertical, 8)
                 }
@@ -212,11 +227,23 @@ struct SurahReaderView: View {
                             isPresented: Binding(get: { selectedAyah != nil }, set: { if !$0 { selectedAyah = nil } }),
                             titleVisibility: .visible) {
             if let ayah = selectedAyah {
+                Button("Tafsir (explanation)") { tafsirFor = AyahRef(surah: surah, ayah: ayah) }
+                Button(bookmarks.isBookmarked(surah: surah, ayah: ayah) ? "Edit bookmark note" : "Bookmark with note") {
+                    bookmarkFor = AyahRef(surah: surah, ayah: ayah)
+                }
                 Button("Play from here") { Task { await audio.play(surah: surah, from: ayah, reciterID: reciterID) } }
                 Button("Pin to lock screen and repeat") { pin(ayah) }
                 Button("Copy Arabic") { UIPasteboard.general.string = store.arabic(surah, ayah) }
                 Button("Copy with meanings") { UIPasteboard.general.string = copyText(ayah) }
             }
+        }
+        .sheet(item: $tafsirFor) { ref in
+            TafsirView(surah: ref.surah, ayah: ref.ayah)
+                .environmentObject(library)
+        }
+        .sheet(item: $bookmarkFor) { ref in
+            NavigationStack { BookmarkEditorView(surah: ref.surah, ayah: ref.ayah) }
+                .environmentObject(library)
         }
         .onAppear {
             isDownloaded = audio.isDownloaded(surah: surah, reciterID: reciterID)
@@ -258,6 +285,9 @@ struct SurahReaderView: View {
         Menu {
             Toggle("Show English meaning", isOn: $library.settings.showEnglish)
             Toggle("Show Bengali meaning", isOn: $library.settings.showBengali)
+            Picker("Script", selection: $library.settings.script) {
+                ForEach(QuranScript.allCases) { Text($0.label).tag($0) }
+            }
             Picker("Reciter", selection: $library.settings.defaultReciterID) {
                 ForEach(Reciter.all) { Text($0.name).tag($0.id) }
             }
@@ -330,6 +360,7 @@ struct SurahReaderView: View {
 
 private struct AyahRow: View {
     @EnvironmentObject var library: LibraryModel
+    @ObservedObject private var bookmarks = BookmarkStore.shared
     let surah: Int
     let ayah: Int
     let isCurrent: Bool
@@ -344,17 +375,23 @@ private struct AyahRow: View {
                 if isCurrent {
                     Image(systemName: "speaker.wave.2.fill").font(.caption).foregroundStyle(.tint)
                 }
+                if bookmarks.isBookmarked(surah: surah, ayah: ayah) {
+                    Image(systemName: "bookmark.fill").font(.caption).foregroundStyle(.orange)
+                        .accessibilityLabel("Bookmarked")
+                }
             }
-            Text(store.arabic(surah, ayah))
-                .font(.system(size: library.settings.arabicFontSize))
-                .multilineTextAlignment(.trailing)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .lineSpacing(8)
+            QuranArabicText(surah: surah, ayah: ayah)
             if library.settings.showEnglish {
                 Text(store.english(surah, ayah)).font(.body)
             }
             if library.settings.showBengali {
                 Text(store.bengali(surah, ayah)).font(.body)
+            }
+            if let note = bookmarks.bookmark(surah: surah, ayah: ayah)?.note, !note.isEmpty {
+                Label(note, systemImage: "note.text")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
             }
         }
         .padding(.vertical, 6)

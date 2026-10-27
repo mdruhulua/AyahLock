@@ -23,14 +23,24 @@ def report(label, url, show=400):
     out.append(f"{status} {label} {url}\n   {text[:show]}")
     return status, text
 
-# Tafsir sources
-for slug in ["en-tafisr-ibn-kathir", "bn-tafseer-ibn-e-kaseer", "bn-tafsir-ahsanul-bayaan", "bn-tafsir-abu-bakr-zakaria", "en-tafsir-maarif-ul-quran"]:
-    report("jsdelivr-ayah", f"https://cdn.jsdelivr.net/gh/spa5k/tafsir_api@main/tafsir/{slug}/2/255.json", 300)
-    report("jsdelivr-surah", f"https://cdn.jsdelivr.net/gh/spa5k/tafsir_api@main/tafsir/{slug}/112.json", 300)
-report("jsdelivr-editions", "https://cdn.jsdelivr.net/gh/spa5k/tafsir_api@main/tafsir/editions.json", 1500)
-report("qcom-tafsir", "https://api.quran.com/api/v4/tafsirs/169/by_ayah/2:255", 300)
-report("qcom-tafsir-list", "https://api.quran.com/api/v4/resources/tafsirs", 300)
-report("islamicapp-tafsir", "https://api.islamic.app/v1/verses/by_key/2:255?tafsirs=en-tafisr-ibn-kathir", 300)
+# Tafsir sources: whole-surah files, on jsDelivr and raw GitHub
+for slug in ["en-tafisr-ibn-kathir", "en-tafsir-maarif-ul-quran", "bn-tafseer-ibn-e-kaseer", "bn-tafsir-ahsanul-bayaan", "bn-tafsir-abu-bakr-zakaria"]:
+    for host in ["https://cdn.jsdelivr.net/gh/spa5k/tafsir_api@main/tafsir", "https://raw.githubusercontent.com/spa5k/tafsir_api/main/tafsir"]:
+        for surah in (2, 112):
+            status, body = get(f"{host}/{slug}/{surah}.json")
+            line = f"{status} {slug} s{surah} {host.split('/')[2]}"
+            if status == 200:
+                try:
+                    rows = json.loads(body)
+                    empty = [r.get("ayah") for r in rows if not (r.get("text") or "").strip()]
+                    keys = sorted(rows[0].keys()) if rows else []
+                    html = sum("<" in (r.get("text") or "") for r in rows)
+                    a255 = next((r.get("text","")[:60] for r in rows if r.get("ayah") == 255), "")
+                    line += f" rows={len(rows)} keys={keys} empty={len(empty)} first_empty={empty[:8]} html_rows={html} 255={a255!r}"
+                except Exception as e:
+                    line += f" parse error {e}"
+            out.append(line)
+note("Tafsir", "\n".join(out)); out.clear()
 
 # IndoPak text sources
 font = TTFont("App/Fonts/DigitalKhattIndoPak.ttf")
@@ -56,4 +66,4 @@ for label, url in [
     sample = {v.get("verse_key"): v.get(key) for v in verses if v.get("verse_key") in ("1:1", "2:1", "112:1")}
     out.append(f"   verses={len(verses)} field={key} distinct_chars={len(chars)} missing_in_font={[hex(c) for c in missing]}\n   sample={json.dumps(sample, ensure_ascii=False)[:500]}\n   2:1 codes={' '.join('%04X' % ord(c) for c in (sample.get('2:1') or ''))}")
 
-note("Probe", "\n".join(out))
+note("IndoPak", "\n".join(out))

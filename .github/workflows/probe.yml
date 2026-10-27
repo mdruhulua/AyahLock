@@ -1,0 +1,11 @@
+# One-off check of tafsir and IndoPak data sources. Start it from the Actions tab.
+name: Data source probe
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: pip install fonttools
+      - run: python3 tools/probe.py
